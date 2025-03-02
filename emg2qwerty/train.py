@@ -15,6 +15,8 @@ import hydra
 import pytorch_lightning as pl
 from hydra.utils import get_original_cwd, instantiate
 from omegaconf import DictConfig, ListConfig, OmegaConf
+# Register environment variable resolver
+OmegaConf.register_resolver("env", lambda name: os.environ.get(name, ""))
 
 from emg2qwerty import transforms, utils
 from emg2qwerty.transforms import Transform
@@ -90,10 +92,14 @@ def main(config: DictConfig):
     callback_configs = config.get("callbacks", [])
     callbacks = [instantiate(cfg) for cfg in callback_configs]
 
+    # Instantiate logger
+    logger = instantiate(config.get("logger"))
+
     # Initialize trainer
     trainer = pl.Trainer(
         **config.trainer,
         callbacks=callbacks,
+        logger=logger,
     )
 
     if config.train:

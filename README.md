@@ -24,6 +24,14 @@ A dataset of surface electromyography (sEMG) recordings while touch typing on a 
   <img src="https://github.com/user-attachments/assets/71a9f361-7685-4188-83c3-099a009b6b81" height="80%" width="80%" alt="alt="sEMG recording" >
 </p>
 
+## WandB Setup
+
+Include `+exp_name=" argument for experiment name, used in `base.yaml` to initialize the experiment name with WandbLogger.
+Update the entity and project directly in the config appropriately as well.
+```bash
+python -m emg2qwerty.train user="single_user" trainer.accelerator=gpu trainer.devices=1 +exp_name="encoder"
+```
+
 ## Setup
 
 ```shell

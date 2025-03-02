@@ -1,7 +1,8 @@
 defaults:
   - user: single_user
   - transforms: log_spectrogram
-  - model: tds_conv_ctc
+  # - model: tds_conv_ctc
+  - model: transformer_encoder_ctc
   - optimizer: adam
   - lr_scheduler: linear_warmup_cosine_annealing
   - decoder: ctc_greedy
@@ -10,7 +11,7 @@ defaults:
 
 seed: 1501
 batch_size: 32
-num_workers: 4  # Number of workers for dataloading
+num_workers: 16  # Number of workers for dataloading
 train: True  # Whether to train or only run validation and test
 checkpoint: null  # Optional path to checkpoint file
 monitor_metric: val/CER
@@ -20,7 +21,7 @@ trainer:
   accelerator: gpu
   devices: 1
   num_nodes: 1
-  max_epochs: 150
+  max_epochs: 300
   default_root_dir: ${hydra:runtime.output_dir}
 
 callbacks:
@@ -31,6 +32,13 @@ callbacks:
     mode: ${monitor_mode}
     save_last: True
     verbose: True
+
+logger:
+  _target_: pytorch_lightning.loggers.WandbLogger
+  entity: emg2qwerty
+  project: encoder_transformer
+  name: ${exp_name}
+  save_dir: logs/${now:%Y-%m-%d}/${now:%H-%M-%S}/wandb
 
 dataset:
   root: ${hydra:runtime.cwd}/data
