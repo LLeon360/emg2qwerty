@@ -8,7 +8,7 @@ from collections.abc import Sequence
 
 import torch
 from torch import nn
-
+import math
 
 class SpectrogramNorm(nn.Module):
     """A `torch.nn.Module` that applies 2D batch normalization over spectrogram
@@ -278,3 +278,60 @@ class TDSConvEncoder(nn.Module):
 
     def forward(self, inputs: torch.Tensor) -> torch.Tensor:
         return self.tds_conv_blocks(inputs)  # (T, N, num_features)
+
+class TransformerEncoder(nn.Module):
+    '''
+    Transformer Encoder alternative to the TDSConvEncoder
+
+    The expected input shape into the model (after the Rotational Invariant MLP) is (T, N, num_features)
+    '''
+
+    def __init__(
+            self, 
+            num_features: int, 
+            num_layers: int = 6, 
+            d_model: int = 512, 
+            nhead: int = 8,
+        ) -> None:
+        super().__init__()
+        self.num_features = num_features
+        self.num_layers = num_layers
+        self.d_model = d_model
+        self.nhead = nhead
+
+        self.fc_in = nn.Linear(num_features, d_model)
+        # Note: Since the CTC loss function expects the input to be of shape (T, N, C), so we set batch_first=False
+        encoder_layer = nn.TransformerEncoderLayer(batch_first=False, d_model=d_model, nhead=nhead)
+        self.transformer_encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
+
+
+    def sinusoidal_positional_encoding(self, d_model: int, length: int) -> torch.Tensor:
+        '''
+        Given d_model and the number of positions (timesteps in signal processing context) returns 1d sinusoidal positional encodings 
+
+        Implementation from "https://github.com/wzlxjtu/PositionalEncoding2D/blob/master/positionalembedding2d.py"
+        '''
+
+        if d_model % 2 != 0:
+            raise ValueError("Cannot use sin/cos positional encoding with "
+                            "odd dim (got dim={:d})".format(d_model))
+        pe = torch.zeros(length, d_model)
+        position = torch.arange(0, length).unsqueeze(1)
+        div_term = torch.exp((torch.arange(0, d_model, 2, dtype=torch.float) *
+                            -(math.log(10000.0) / d_model)))
+        pe[:, 0::2] = torch.sin(position.float() * div_term)
+        pe[:, 1::2] = torch.cos(position.float() * div_term)
+
+        return pe
+
+
+    def forward(self, inputs: torch.Tensor) -> torch.Tensor:
+        x = self.fc_in(inputs) # (T, N, num_features) -> (T, N, d_model)
+
+        # add sinusoidal positional encoding
+        pe = self.sinusoidal_positional_encoding(self.d_model, x.shape[0]).unsqueeze(1).to(x.device) # (T, d_model) -> (T, 1, d_model)
+        x = x + pe # (T, N, d_model) + (T, 1, d_model) -> (T, N, d_model)
+        
+        out = self.transformer_encoder(x) # (T, N, d_model) -> (T, N, d_model)
+
+        return out
