@@ -1,22 +1,22 @@
 #!/bin/bash
 
-DEVICES=0
+DEVICES=2
 NUM_DEVICES=1
 NUM_NODES=1
 USER="single_user"
 MODEL="residual_rnn_ctc"
-BATCH_SIZE=128
+BATCH_SIZE=64
 CLUSTER="local"
 LOG_DIR="logs"
 SEED=0
-LEARNING_RATE=4e-4
+LEARNING_RATE=1e-4
 MAX_EPOCHS=1000
 LOG_EVERY_N_STEPS=50
 GRAD_ACCUM=2
 # NOTE: gradient accumulation is defined manually in residual_rnn_ctc.yaml and rnn_ctc.yaml
 # This parameter above doesn't actually do anything!
 
-EXP_NAME="${MODEL}_BS${BATCH_SIZE}x${GRAD_ACCUM}_LR${LEARNING_RATE}_SEED${SEED}_EPOCHS${MAX_EPOCHS}_512MLPFeatures_512HiddenSize_4Layers_0.3Dropout_GRU"
+EXP_NAME="${MODEL}_BS${BATCH_SIZE}x${GRAD_ACCUM}_LR${LEARNING_RATE}_SEED${SEED}_EPOCHS${MAX_EPOCHS}_384MLPFeatures_256HiddenSize_2Layers_0.2Dropout_GRU"
 # EXP_NAME="RNN_CTC_INVESTIGATE"
 
 mkdir -p ${LOG_DIR}

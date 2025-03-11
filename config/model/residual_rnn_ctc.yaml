@@ -2,14 +2,14 @@
 module:
   _target_: emg2qwerty.lightning.ResidualRNNCTCModule
   in_features: 528         # (n_fft // 2 + 1) * 16
-  # mlp_features: [384]      # Each hand produces 384 features
-  # rnn_hidden_size: 256
-  # rnn_num_layers: 2
-  # dropout: 0.2
-  mlp_features: [512]      # Each hand produces 384 features
-  rnn_hidden_size: 512
-  rnn_num_layers: 4
-  dropout: 0.3
+  mlp_features: [384]      # Each hand produces 384 features
+  rnn_hidden_size: 256
+  rnn_num_layers: 2
+  dropout: 0.2
+  # mlp_features: [512]      # Each hand produces 384 features
+  # rnn_hidden_size: 512
+  # rnn_num_layers: 4
+  # dropout: 0.3
   rnn_type: "GRU"   # GRU, LSTM
   optimizer: adamw
   lr_scheduler: linear_warmup_cosine_annealing
