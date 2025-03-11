@@ -1,8 +1,8 @@
 defaults:
   - user: single_user
   - transforms: log_spectrogram
-  # - model: tds_conv_ctc
-  - model: transformer_encoder_ctc
+  - model: tds_conv_ctc
+  # - model: transformer_encoder_ctc
   # - model: transformer_encoder_ctc_small
   - optimizer: adamw
   - lr_scheduler: linear_warmup_cosine_annealing
@@ -15,6 +15,11 @@ batch_size: 32
 num_workers: 16  # Number of workers for dataloading
 train: True  # Whether to train or only run validation and test
 checkpoint: null  # Optional path to checkpoint file
+
+# EVAL MODE:
+# train: False
+# checkpoint: "/home/bytemarish/ECEC147/emg2qwerty/logs/2025-03-02/12-52-10/checkpoints/epoch=890-step=106920.ckpt"
+
 monitor_metric: val/CER
 monitor_mode: min
 
@@ -34,12 +39,12 @@ callbacks:
     save_last: True
     verbose: True
 
-logger:
-  _target_: pytorch_lightning.loggers.WandbLogger
-  entity: emg2qwerty
-  project: encoder_transformer
-  name: ${exp_name}
-  save_dir: logs/${now:%Y-%m-%d}/${now:%H-%M-%S}/wandb
+# logger:
+#   _target_: pytorch_lightning.loggers.WandbLogger
+#   entity: emg2qwerty
+#   project: encoder_transformer
+#   name: ${exp_name}
+#   save_dir: logs/${now:%Y-%m-%d}/${now:%H-%M-%S}/wandb
 
 dataset:
   root: ${hydra:runtime.cwd}/data

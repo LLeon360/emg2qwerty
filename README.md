@@ -29,7 +29,14 @@ A dataset of surface electromyography (sEMG) recordings while touch typing on a 
 Include `+exp_name="` argument for experiment name, used in `base.yaml` to initialize the experiment name with WandbLogger.
 Update the entity and project directly in the config appropriately as well.
 ```bash
-python -m emg2qwerty.train user="single_user" trainer.accelerator=gpu trainer.devices=1 +exp_name="encoder"
+CUDA_VISIBLE_DEVICES=2 python -m emg2qwerty.train user="single_user" trainer.accelerator=gpu trainer.devices=1 +exp_name="encoder_small" model="transformer_encoder_ctc_small" > logs/stdout3.log 2>&1 
+```
+
+Eval (change base.yaml to train: False and load ckpt) 
+
+```bash
+
+CUDA_VISIBLE_DEVICES=0 python -m emg2qwerty.train user="single_user" trainer.accelerator=gpu trainer.devices=1 +exp_name="encoder_small" model="transformer_encoder_ctc_small" train=False checkpoint="/home/bytemarish/ECEC147/emg2qwerty/logs/2025-03-02/12-52-10/checkpoints/last.ckpt " > logs/eval1.log 2>&1 
 ```
 
 ## Setup

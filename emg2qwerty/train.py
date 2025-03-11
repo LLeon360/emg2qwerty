@@ -93,7 +93,10 @@ def main(config: DictConfig):
     callbacks = [instantiate(cfg) for cfg in callback_configs]
 
     # Instantiate logger
-    logger = instantiate(config.get("logger"))
+    logger = None
+    if config.get("logger", None) is not None:
+        logger = instantiate(config.get("logger"))
+        logger.log_hyperparams(config)
 
     # Initialize trainer
     trainer = pl.Trainer(
