@@ -53,3 +53,12 @@ bids_data
 
 # LM
 wikitext-103-raw*
+
+# Models
+models
+
+# wandb logs
+wandb_logs
+
+# checkpoint
+checkpoints
