@@ -39,12 +39,12 @@ callbacks:
     save_last: True
     verbose: True
 
-# logger:
-#   _target_: pytorch_lightning.loggers.WandbLogger
-#   entity: emg2qwerty
-#   project: encoder_transformer
-#   name: ${exp_name}
-#   save_dir: logs/${now:%Y-%m-%d}/${now:%H-%M-%S}/wandb
+logger:
+  _target_: pytorch_lightning.loggers.WandbLogger
+  entity: emg2qwerty
+  project: encoder_transformer
+  name: ${exp_name}
+  save_dir: /home/rathul/emg2qwerty/wandb_logs/ # ${now:%Y-%m-%d}/${now:%H-%M-%S}/wandb
 
 dataset:
   root: ${hydra:runtime.cwd}/data
