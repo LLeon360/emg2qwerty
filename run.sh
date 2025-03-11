@@ -1,27 +1,26 @@
 #!/bin/bash
-# Distributed training script for emg2qwerty
 
-# Default configuration
 DEVICES=0
 NUM_DEVICES=1
 NUM_NODES=1
 USER="single_user"
-MODEL="transformer_encoder_ctc_small"
-EXP_NAME="INVESTIGATE"
-BATCH_SIZE=32
+MODEL="residual_rnn_ctc"
+BATCH_SIZE=128
 CLUSTER="local"
 LOG_DIR="logs"
 SEED=0
-
-# Training hyperparameters with defaults
-LEARNING_RATE=1e-4
+LEARNING_RATE=4e-4
 MAX_EPOCHS=1000
 LOG_EVERY_N_STEPS=50
+GRAD_ACCUM=2
+# NOTE: gradient accumulation is defined manually in residual_rnn_ctc.yaml and rnn_ctc.yaml
+# This parameter above doesn't actually do anything!
 
-# Create log directory if it doesn't exist
+EXP_NAME="${MODEL}_BS${BATCH_SIZE}x${GRAD_ACCUM}_LR${LEARNING_RATE}_SEED${SEED}_EPOCHS${MAX_EPOCHS}_512MLPFeatures_512HiddenSize_4Layers_0.3Dropout_GRU"
+# EXP_NAME="RNN_CTC_INVESTIGATE"
+
 mkdir -p ${LOG_DIR}
 
-# Construct the training command
 CMD="python -m emg2qwerty.train \
   user=\"${USER}\" \
   trainer.accelerator=gpu \
@@ -36,7 +35,6 @@ CMD="python -m emg2qwerty.train \
   trainer.max_epochs=${MAX_EPOCHS} \
   +trainer.log_every_n_steps=${LOG_EVERY_N_STEPS}"
 
-# Run the training command and log output
 echo "${CMD}"
 LOG_FILE="${LOG_DIR}/${EXP_NAME}_$(date +%Y%m%d_%H%M%S).log"
 eval "CUDA_VISIBLE_DEVICES=${DEVICES} ${CMD} 2>&1 | tee ${LOG_FILE}"

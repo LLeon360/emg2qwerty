@@ -1,19 +1,15 @@
 #!/bin/bash
-# Evaluation script for emg2qwerty
 
-# Default configuration
-DEVICES=0
-NUM_DEVICES=1
+DEVICES=0,1
+NUM_DEVICES=2
 USER="leonliu360-ucla-org"
 MODEL="transformer_encoder_ctc_small"
 EXP_NAME="distributed_training"
 CHECKPOINT=""
 LOG_DIR="logs"
 
-# Create log directory if it doesn't exist
 mkdir -p ${LOG_DIR}
 
-# Find the best checkpoint if not specified
 if [ -z "${CHECKPOINT}" ]; then
   # Look for the latest log directory matching the experiment name
   LOG_DIRS=$(find ${LOG_DIR} -type d -name "*" | sort -r)
@@ -37,7 +33,6 @@ if [ -z "${CHECKPOINT}" ]; then
   fi
 fi
 
-# Construct the evaluation command
 CMD="python -m emg2qwerty.train \
     user=\"${USER}\" \
     trainer.accelerator=gpu \

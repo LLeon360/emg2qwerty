@@ -424,3 +424,323 @@ class TransformerEncoderCTCModule(pl.LightningModule):
             optimizer_config=self.hparams.optimizer,
             lr_scheduler_config=self.hparams.lr_scheduler,
         )
+        
+class RNNCTCModule(pl.LightningModule):
+    NUM_BANDS: ClassVar[int] = 2
+    ELECTRODE_CHANNELS: ClassVar[int] = 16
+
+    def __init__(
+        self,
+        in_features: int,
+        mlp_features: Sequence[int],
+        rnn_hidden_size: int,
+        rnn_num_layers: int,
+        rnn_type: str = "GRU",
+        dropout: float = 0.2,
+        optimizer: DictConfig = None,
+        lr_scheduler: DictConfig = None,
+        decoder: DictConfig = None,
+    ) -> None:
+        super().__init__()
+        self.save_hyperparameters()
+        
+        # After the rotation invariant MLP, each hand produces mlp_features[-1] features
+        # With NUM_BANDS = 2, the concatenated feature dimension is:
+        num_features = self.NUM_BANDS * mlp_features[-1]  # e.g., 2*384 = 768
+
+        # Frontend takes us from raw spectrograms to concatenated hand features
+        self.feature_extractor = nn.Sequential(
+            # Process each hand’s spectrogram
+            SpectrogramNorm(channels=self.NUM_BANDS * self.ELECTRODE_CHANNELS),
+            MultiBandRotationInvariantMLP(
+                in_features=in_features,
+                mlp_features=mlp_features,
+                num_bands=self.NUM_BANDS,
+            ),
+            # Flatten the per-hand outputs
+            nn.Flatten(start_dim=2),  # (T, N, num_features)
+        )
+        
+        # Causal, unidirectional RNN
+        if rnn_type.upper() == "GRU":
+            self.rnn = nn.GRU(
+                input_size=num_features,
+                hidden_size=rnn_hidden_size,
+                num_layers=rnn_num_layers,
+                batch_first=False,
+                bidirectional=False,
+                dropout=dropout,
+            )
+        elif rnn_type.upper() == "LSTM":
+            self.rnn = nn.LSTM(
+                input_size=num_features,
+                hidden_size=rnn_hidden_size,
+                num_layers=rnn_num_layers,
+                batch_first=False,
+                bidirectional=False,
+                dropout=dropout,
+            )
+        else:
+            raise ValueError("Unsupported rnn_type. Choose 'GRU' or 'LSTM'.")
+
+        # Final decoding layer to project the RNN outputs to character logits
+        self.fc = nn.Linear(rnn_hidden_size, charset().num_classes)
+        self.log_softmax = nn.LogSoftmax(dim=-1)
+        
+        # CTC loss function
+        self.ctc_loss = nn.CTCLoss(blank=charset().null_class)
+        
+        # Instantiate the decoder from configuration
+        self.decoder = instantiate(decoder)
+        
+        # Setup metrics
+        metrics = MetricCollection([CharacterErrorRates()])
+        self.metrics = nn.ModuleDict({
+            f"{phase}_metrics": metrics.clone(prefix=f"{phase}/")
+            for phase in ["train", "val", "test"]
+        })
+
+    def forward(self, inputs: torch.Tensor) -> torch.Tensor:
+        # inputs shape: (T, N, bands, electrode_channels, freq)
+        features = self.feature_extractor(inputs)   # -> (T, N, num_features)
+        rnn_out, _ = self.rnn(features)             # -> (T, N, rnn_hidden_size)
+        logits = self.fc(rnn_out)                   # -> (T, N, num_classes)
+        return self.log_softmax(logits)
+
+    def _step(self, phase: str, batch: dict[str, torch.Tensor], *args, **kwargs) -> torch.Tensor:
+        inputs = batch["inputs"]
+        targets = batch["targets"]
+        input_lengths = batch["input_lengths"]
+        target_lengths = batch["target_lengths"]
+        N = len(input_lengths)
+        
+        emissions = self.forward(inputs)
+        # Adjust emission lengths if needed (assumes no downsampling within RNN)
+        T_diff = inputs.shape[0] - emissions.shape[0]
+        emission_lengths = input_lengths - T_diff
+        
+        loss = self.ctc_loss(
+            log_probs=emissions,                 # (T, N, num_classes)
+            targets=targets.transpose(0, 1),     # (N, T)
+            input_lengths=emission_lengths,      # (N,)
+            target_lengths=target_lengths,       # (N,)
+        )
+        
+        predictions = self.decoder.decode_batch(
+            emissions=emissions.detach().cpu().numpy(),
+            emission_lengths=emission_lengths.detach().cpu().numpy(),
+        )
+        
+        metrics = self.metrics[f"{phase}_metrics"]
+        targets_cpu = targets.detach().cpu().numpy()
+        target_lengths_cpu = target_lengths.detach().cpu().numpy()
+        for i in range(N):
+            target_seq = LabelData.from_labels(targets_cpu[:target_lengths_cpu[i], i])
+            metrics.update(prediction=predictions[i], target=target_seq)
+        
+        self.log(f"{phase}/loss", loss, batch_size=N, sync_dist=True)
+        return loss
+
+    def training_step(self, *args, **kwargs) -> torch.Tensor:
+        return self._step("train", *args, **kwargs)
+
+    def validation_step(self, *args, **kwargs) -> torch.Tensor:
+        return self._step("val", *args, **kwargs)
+
+    def test_step(self, *args, **kwargs) -> torch.Tensor:
+        return self._step("test", *args, **kwargs)
+
+    def on_train_epoch_end(self) -> None:
+        self._epoch_end("train")
+
+    def on_validation_epoch_end(self) -> None:
+        self._epoch_end("val")
+
+    def on_test_epoch_end(self) -> None:
+        self._epoch_end("test")
+
+    def _epoch_end(self, phase: str) -> None:
+        metrics = self.metrics[f"{phase}_metrics"]
+        self.log_dict(metrics.compute(), sync_dist=True)
+        metrics.reset()
+
+    def configure_optimizers(self) -> dict[str, Any]:
+        return utils.instantiate_optimizer_and_scheduler(
+            self.parameters(),
+            optimizer_config=self.hparams.optimizer,
+            lr_scheduler_config=self.hparams.lr_scheduler,
+        )
+
+class ResidualRNN(nn.Module):
+    """
+    Helper class that builds a stack of causal RNN layers with residual connections
+    Used in the below residual RNN module
+    """
+    def __init__(self, input_size: int, hidden_size: int, num_layers: int, rnn_type: str = "GRU", dropout: float = 0.2):
+        super().__init__()
+        self.layers = nn.ModuleList()
+        for i in range(num_layers):
+            if rnn_type.upper() == "GRU":
+                self.layers.append(nn.GRU(
+                    input_size=input_size if i == 0 else hidden_size,
+                    hidden_size=hidden_size,
+                    num_layers=1,
+                    batch_first=False,
+                    bidirectional=False,
+                    dropout=0  # We apply dropout manually later
+                ))
+            elif rnn_type.upper() == "LSTM":
+                self.layers.append(nn.LSTM(
+                    input_size=input_size if i == 0 else hidden_size,
+                    hidden_size=hidden_size,
+                    num_layers=1,
+                    batch_first=False,
+                    bidirectional=False,
+                    dropout=0  # We apply dropout manually later
+                ))
+            else:
+                raise ValueError("Unsupported rnn_type. Choose 'GRU' or 'LSTM'.")
+        self.dropout = nn.Dropout(dropout)
+
+    def forward(self, x):
+        # x: (T, N, input_size)
+        for i, layer in enumerate(self.layers):
+            residual = x
+            x, _ = layer(x)
+            x = self.dropout(x)
+            if i > 0:
+                x == residual
+        return x
+
+class ResidualRNNCTCModule(pl.LightningModule):
+    """
+    Residual RNN module that uses the above ResidualRNN for the main computational block
+    """
+    NUM_BANDS: ClassVar[int] = 2
+    ELECTRODE_CHANNELS: ClassVar[int] = 16
+
+    def __init__(
+        self,
+        in_features: int,
+        mlp_features: Sequence[int],
+        rnn_hidden_size: int,
+        rnn_num_layers: int,
+        rnn_type: str = "GRU",
+        dropout: float = 0.2,
+        optimizer: DictConfig = None,
+        lr_scheduler: DictConfig = None,
+        decoder: DictConfig = None,
+    ) -> None:
+        super().__init__()
+        self.save_hyperparameters()
+        
+        # After the rotation invariant MLP, each hand produces mlp_features[-1] features.
+        # With NUM_BANDS = 2, concatenated feature dimension is:
+        num_features = self.NUM_BANDS * mlp_features[-1]  # e.g., 2*384 = 768
+
+        # Frontend
+        self.feature_extractor = nn.Sequential(
+            SpectrogramNorm(channels=self.NUM_BANDS * self.ELECTRODE_CHANNELS),
+            MultiBandRotationInvariantMLP(
+                in_features=in_features,
+                mlp_features=mlp_features,
+                num_bands=self.NUM_BANDS,
+            ),
+            nn.Flatten(start_dim=2),  # (T, N, num_features)
+        )
+        
+        self.residual_rnn = ResidualRNN(
+            input_size=num_features,
+            hidden_size=rnn_hidden_size,
+            num_layers=rnn_num_layers,
+            rnn_type=rnn_type,
+            dropout=dropout,
+        )
+
+        # Decoding layer
+        self.fc = nn.Linear(rnn_hidden_size, charset().num_classes)
+        self.log_softmax = nn.LogSoftmax(dim=-1)
+        
+        self.ctc_loss = nn.CTCLoss(blank=charset().null_class)
+        
+        # Instantiate decoder
+        self.decoder = instantiate(decoder)
+        
+        # Setup metrics
+        metrics = MetricCollection([CharacterErrorRates()])
+        self.metrics = nn.ModuleDict({
+            f"{phase}_metrics": metrics.clone(prefix=f"{phase}/")
+            for phase in ["train", "val", "test"]
+        })
+
+    def forward(self, inputs: torch.Tensor) -> torch.Tensor:
+        # inputs shape: (T, N, bands, electrode_channels, freq)
+        features = self.feature_extractor(inputs)    # -> (T, N, num_features)
+        rnn_out = self.residual_rnn(features)        # -> (T, N, rnn_hidden_size)
+        logits = self.fc(rnn_out)                    # -> (T, N, num_classes)
+        return self.log_softmax(logits)
+
+    def _step(self, phase: str, batch: dict[str, torch.Tensor], *args, **kwargs) -> torch.Tensor:
+        inputs = batch["inputs"]
+        targets = batch["targets"]
+        input_lengths = batch["input_lengths"]
+        target_lengths = batch["target_lengths"]
+        N = len(input_lengths)
+        
+        emissions = self.forward(inputs)
+        # Adjust emission lengths if needed (assuming no downsampling in the RNN block).
+        T_diff = inputs.shape[0] - emissions.shape[0]
+        emission_lengths = input_lengths - T_diff
+        
+        loss = self.ctc_loss(
+            log_probs=emissions,                 # (T, N, num_classes)
+            targets=targets.transpose(0, 1),     # (N, T)
+            input_lengths=emission_lengths,      # (N,)
+            target_lengths=target_lengths,       # (N,)
+        )
+        
+        predictions = self.decoder.decode_batch(
+            emissions=emissions.detach().cpu().numpy(),
+            emission_lengths=emission_lengths.detach().cpu().numpy(),
+        )
+        
+        metrics = self.metrics[f"{phase}_metrics"]
+        targets_cpu = targets.detach().cpu().numpy()
+        target_lengths_cpu = target_lengths.detach().cpu().numpy()
+        for i in range(N):
+            target_seq = LabelData.from_labels(targets_cpu[:target_lengths_cpu[i], i])
+            metrics.update(prediction=predictions[i], target=target_seq)
+        
+        self.log(f"{phase}/loss", loss, batch_size=N, sync_dist=True)
+        return loss
+
+    def training_step(self, *args, **kwargs) -> torch.Tensor:
+        return self._step("train", *args, **kwargs)
+
+    def validation_step(self, *args, **kwargs) -> torch.Tensor:
+        return self._step("val", *args, **kwargs)
+
+    def test_step(self, *args, **kwargs) -> torch.Tensor:
+        return self._step("test", *args, **kwargs)
+
+    def on_train_epoch_end(self) -> None:
+        self._epoch_end("train")
+
+    def on_validation_epoch_end(self) -> None:
+        self._epoch_end("val")
+
+    def on_test_epoch_end(self) -> None:
+        self._epoch_end("test")
+
+    def _epoch_end(self, phase: str) -> None:
+        metrics = self.metrics[f"{phase}_metrics"]
+        self.log_dict(metrics.compute(), sync_dist=True)
+        metrics.reset()
+
+    def configure_optimizers(self) -> dict[str, Any]:
+        # NOTE: For gradient clipping, set the trainer parameter gradient_clip_val (e.g., to 1.0)
+        return utils.instantiate_optimizer_and_scheduler(
+            self.parameters(),
+            optimizer_config=self.hparams.optimizer,
+            lr_scheduler_config=self.hparams.lr_scheduler,
+        )
