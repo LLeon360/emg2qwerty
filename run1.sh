@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Basic training configuration
-DEVICES=1
+DEVICES=0
 NUM_DEVICES=1
 NUM_NODES=1
 USER="single_user"
