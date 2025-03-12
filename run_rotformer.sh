@@ -1,6 +1,6 @@
 #!/bin/bash
 
-DEVICES=0
+DEVICES=1
 NUM_DEVICES=1
 NUM_NODES=1
 USER="single_user"

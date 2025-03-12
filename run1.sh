@@ -1,6 +1,7 @@
 #!/bin/bash
 
-DEVICES=0
+# Basic training configuration
+DEVICES=1
 NUM_DEVICES=1
 NUM_NODES=1
 USER="single_user"
@@ -9,18 +10,27 @@ BATCH_SIZE=64
 CLUSTER="local"
 LOG_DIR="logs"
 SEED=0
-LEARNING_RATE=1e-4
+LEARNING_RATE=4e-4
 MAX_EPOCHS=1000
 LOG_EVERY_N_STEPS=50
 GRAD_ACCUM=1
 # NOTE: gradient accumulation is defined manually in residual_rnn_ctc.yaml and rnn_ctc.yaml
-# This parameter above doesn't actually do anything!
 
-EXP_NAME="${MODEL}_BS${BATCH_SIZE}x${GRAD_ACCUM}_LR${LEARNING_RATE}_SEED${SEED}_EPOCHS${MAX_EPOCHS}_384MLPFeatures_256HiddenSize_2Layers_0.2Dropout_GRU"
+# Current active configuration parameters
+MLP_FEATURES="[384]"  
+MLP_FEAUTRES_EXP_NAME="384"
+HIDDEN_SIZE=256
+NUM_LAYERS=2
+DROPOUT=0.2
+RNN_TYPE="GRU"
+
+# Build experiment name with module parameters
+EXP_NAME="${MODEL}_BS${BATCH_SIZE}x${GRAD_ACCUM}_LR${LEARNING_RATE}_SEED${SEED}_EPOCHS${MAX_EPOCHS}_${MLP_FEAUTRES_EXP_NAME}MLPFeatures_${HIDDEN_SIZE}HiddenSize_${NUM_LAYERS}Layers_${DROPOUT}Dropout_${RNN_TYPE}"
 # EXP_NAME="RNN_CTC_INVESTIGATE"
 
 mkdir -p ${LOG_DIR}
 
+# Build command with all parameters
 CMD="python -m emg2qwerty.train \
   user=\"${USER}\" \
   trainer.accelerator=gpu \
@@ -33,7 +43,12 @@ CMD="python -m emg2qwerty.train \
   cluster=${CLUSTER} \
   optimizer.lr=${LEARNING_RATE} \
   trainer.max_epochs=${MAX_EPOCHS} \
-  +trainer.log_every_n_steps=${LOG_EVERY_N_STEPS}"
+  +trainer.log_every_n_steps=${LOG_EVERY_N_STEPS} \
+  module.mlp_features='${MLP_FEATURES}' \
+  module.rnn_hidden_size=${HIDDEN_SIZE} \
+  module.rnn_num_layers=${NUM_LAYERS} \
+  module.dropout=${DROPOUT} \
+  module.rnn_type=\"${RNN_TYPE}\""
 
 echo "${CMD}"
 LOG_FILE="${LOG_DIR}/${EXP_NAME}_$(date +%Y%m%d_%H%M%S).log"
