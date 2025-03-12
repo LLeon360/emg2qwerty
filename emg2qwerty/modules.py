@@ -404,6 +404,7 @@ class RotaryTransformerEncoderLayer(nn.Module):
         src = src + self.dropout(src2)
         return src
 
+
 class RotaryAttention(nn.Module):
     def __init__(self, embed_dim: int, num_heads: int, dropout: float = 0.1):
         super().__init__()
@@ -417,66 +418,148 @@ class RotaryAttention(nn.Module):
         self.out_proj = nn.Linear(embed_dim, embed_dim)
         self.dropout = nn.Dropout(dropout)
 
-        # Rotary embedding parameters
+        # Rotary embedding parameters: compute inverse frequencies for half of head_dim.
         self.register_buffer(
             "inv_freq", 
             1.0 / (10000 ** (torch.arange(0, self.head_dim, 2).float() / self.head_dim))
         )
 
-    def _compute_rotary_emb(self, x: torch.Tensor, seq_dim: int = 0) -> torch.Tensor:
-        seq_len = x.size(seq_dim)
-        t = torch.arange(seq_len, device=x.device, dtype=self.inv_freq.dtype)
+    def _compute_rotary_emb(self, seq_len: int, device: torch.device) -> torch.Tensor:
+        """
+        Computes rotary frequencies.
+        Returns a tensor of shape (seq_len, head_dim) where head_dim is doubled.
+        """
+        t = torch.arange(seq_len, device=device, dtype=self.inv_freq.dtype)
         freqs = torch.einsum('i,j->ij', t, self.inv_freq)  # shape: (seq_len, head_dim/2)
-        # Duplicate to cover full head_dim
         return torch.cat([freqs, freqs], dim=-1)  # shape: (seq_len, head_dim)
 
     def _apply_rotary_emb(self, x: torch.Tensor, freqs: torch.Tensor) -> torch.Tensor:
-        # Reshape freqs for broadcasting: (T, 1, 1, head_dim)
-        cos = freqs.cos().unsqueeze(1).unsqueeze(1)
-        sin = freqs.sin().unsqueeze(1).unsqueeze(1)
+        """
+        Applies rotary embeddings to tensor x.
+        x: Tensor of shape (N, H, T, D)
+        freqs: Tensor of shape (T, D)
+        Returns: Tensor of shape (N, H, T, D) with rotary embeddings applied.
+        """
+        # Reshape freqs for broadcasting: (1, 1, T, D)
+        cos = freqs.cos().unsqueeze(0).unsqueeze(0)
+        sin = freqs.sin().unsqueeze(0).unsqueeze(0)
         return (x * cos) + (self._rotate_half(x) * sin)
 
     @staticmethod
     def _rotate_half(x: torch.Tensor) -> torch.Tensor:
+        """
+        Splits the last dimension in half and rotates the two halves.
+        """
         x1, x2 = x.chunk(2, dim=-1)
         return torch.cat((-x2, x1), dim=-1)
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, attn_mask: Optional[torch.Tensor] = None) -> torch.Tensor:
         """
         Args:
             x: Tensor of shape (T, N, E)
+            attn_mask: Optional attention mask (default: None)
         Returns:
             Tensor of shape (T, N, E)
         """
         T, N, _ = x.shape
         
-        # Project inputs
-        q, k, v = self.in_proj(x).chunk(3, dim=-1)
+        # Project inputs to Q, K, V and split into three tensors
+        qkv = self.in_proj(x)  # shape: (T, N, 3*E)
+        q, k, v = qkv.chunk(3, dim=-1)
         
-        # Reshape for multi-head attention
-        q = q.view(T, N, self.num_heads, self.head_dim)
-        k = k.view(T, N, self.num_heads, self.head_dim)
-        v = v.view(T, N, self.num_heads, self.head_dim)
+        # Reshape for multi-head attention and rearrange to shape (N, H, T, D)
+        q = q.view(T, N, self.num_heads, self.head_dim).transpose(0, 1).transpose(1, 2)
+        k = k.view(T, N, self.num_heads, self.head_dim).transpose(0, 1).transpose(1, 2)
+        v = v.view(T, N, self.num_heads, self.head_dim).transpose(0, 1).transpose(1, 2)
+        # Now: q, k, v have shape: (N, H, T, D)
         
-        # Compute and apply rotary embeddings (using sequence length dimension)
-        freqs = self._compute_rotary_emb(q)
+        # Compute rotary embeddings for sequence length T and apply to q and k.
+        freqs = self._compute_rotary_emb(T, x.device)  # shape: (T, D)
         q = self._apply_rotary_emb(q, freqs)
         k = self._apply_rotary_emb(k, freqs)
         
-        # Attention computation
-        q = q.permute(1, 2, 0, 3)  # (N, H, T, D)
-        k = k.permute(1, 2, 3, 0)  # (N, H, D, T)
-        v = v.permute(1, 2, 0, 3)  # (N, H, T, D)
+        # Use PyTorch's efficient scaled_dot_product_attention.
+        # It expects inputs of shape (batch, *, seq_len, embed_dim) where * are additional dimensions (here, H)
+        attn_output = F.scaled_dot_product_attention(q, k, v, attn_mask=attn_mask, dropout_p=self.dropout.p)
+        # attn_output shape: (N, H, T, D)
         
-        # Scaled dot-product attention
-        attn_weights = torch.matmul(q, k) / math.sqrt(self.head_dim)
-        attn_weights = F.softmax(attn_weights, dim=-1)
-        attn_weights = self.dropout(attn_weights)
+        # Rearrange output back to (T, N, E)
+        attn_output = attn_output.transpose(1, 2).reshape(N, T, self.embed_dim).transpose(0, 1)
+        return self.out_proj(attn_output)
+
+# class RotaryAttention(nn.Module):
+#     def __init__(self, embed_dim: int, num_heads: int, dropout: float = 0.1):
+#         super().__init__()
+#         self.embed_dim = embed_dim
+#         self.num_heads = num_heads
+#         self.head_dim = embed_dim // num_heads
+#         assert self.head_dim * num_heads == embed_dim, "embed_dim must be divisible by num_heads"
+
+#         # Projection layers
+#         self.in_proj = nn.Linear(embed_dim, 3 * embed_dim)
+#         self.out_proj = nn.Linear(embed_dim, embed_dim)
+#         self.dropout = nn.Dropout(dropout)
+
+#         # Rotary embedding parameters
+#         self.register_buffer(
+#             "inv_freq", 
+#             1.0 / (10000 ** (torch.arange(0, self.head_dim, 2).float() / self.head_dim))
+#         )
+
+#     def _compute_rotary_emb(self, x: torch.Tensor, seq_dim: int = 0) -> torch.Tensor:
+#         seq_len = x.size(seq_dim)
+#         t = torch.arange(seq_len, device=x.device, dtype=self.inv_freq.dtype)
+#         freqs = torch.einsum('i,j->ij', t, self.inv_freq)  # shape: (seq_len, head_dim/2)
+#         # Duplicate to cover full head_dim
+#         return torch.cat([freqs, freqs], dim=-1)  # shape: (seq_len, head_dim)
+
+#     def _apply_rotary_emb(self, x: torch.Tensor, freqs: torch.Tensor) -> torch.Tensor:
+#         # Reshape freqs for broadcasting: (T, 1, 1, head_dim)
+#         cos = freqs.cos().unsqueeze(1).unsqueeze(1)
+#         sin = freqs.sin().unsqueeze(1).unsqueeze(1)
+#         return (x * cos) + (self._rotate_half(x) * sin)
+
+#     @staticmethod
+#     def _rotate_half(x: torch.Tensor) -> torch.Tensor:
+#         x1, x2 = x.chunk(2, dim=-1)
+#         return torch.cat((-x2, x1), dim=-1)
+
+#     def forward(self, x: torch.Tensor) -> torch.Tensor:
+#         """
+#         Args:
+#             x: Tensor of shape (T, N, E)
+#         Returns:
+#             Tensor of shape (T, N, E)
+#         """
+#         T, N, _ = x.shape
         
-        # Apply attention to values
-        output = torch.matmul(attn_weights, v)
-        output = output.permute(2, 0, 1, 3).reshape(T, N, self.embed_dim)
-        return self.out_proj(output)
+#         # Project inputs
+#         q, k, v = self.in_proj(x).chunk(3, dim=-1)
+        
+#         # Reshape for multi-head attention
+#         q = q.view(T, N, self.num_heads, self.head_dim)
+#         k = k.view(T, N, self.num_heads, self.head_dim)
+#         v = v.view(T, N, self.num_heads, self.head_dim)
+        
+#         # Compute and apply rotary embeddings (using sequence length dimension)
+#         freqs = self._compute_rotary_emb(q)
+#         q = self._apply_rotary_emb(q, freqs)
+#         k = self._apply_rotary_emb(k, freqs)
+        
+#         # Attention computation
+#         q = q.permute(1, 2, 0, 3)  # (N, H, T, D)
+#         k = k.permute(1, 2, 3, 0)  # (N, H, D, T)
+#         v = v.permute(1, 2, 0, 3)  # (N, H, T, D)
+        
+#         # Scaled dot-product attention
+#         attn_weights = torch.matmul(q, k) / math.sqrt(self.head_dim)
+#         attn_weights = F.softmax(attn_weights, dim=-1)
+#         attn_weights = self.dropout(attn_weights)
+        
+#         # Apply attention to values
+#         output = torch.matmul(attn_weights, v)
+#         output = output.permute(2, 0, 1, 3).reshape(T, N, self.embed_dim)
+#         return self.out_proj(output)
 
 class FeedForward(nn.Module):
     def __init__(self, d_model: int, dim_feedforward: int, dropout: float):
