@@ -36,7 +36,14 @@ Eval (change base.yaml to train: False and load ckpt)
 
 ```bash
 
-CUDA_VISIBLE_DEVICES=0 python -m emg2qwerty.train user="single_user" trainer.accelerator=gpu trainer.devices=1 +exp_name="encoder_small" model="transformer_encoder_ctc_small" train=False checkpoint="/home/bytemarish/ECEC147/emg2qwerty/logs/2025-03-02/12-52-10/checkpoints/last.ckpt " > logs/eval1.log 2>&1 
+CUDA_VISIBLE_DEVICES=0 python -m emg2qwerty.train user="single_user" trainer.accelerator=gpu trainer.devices=1 +exp_name="rot_encoder_small" model="roformer_encoder_ctc_small" train=True > logs/eval1.log 2>&1 
+```
+
+Train 
+
+```bash
+CUDA_VISIBLE_DEVICES=0 python -m emg2qwerty.train user="single_user" trainer.accelerator=gpu trainer.devices=1 +exp_name="rot_encoder_small" model="roformer_encoder_ctc_small" train=True > logs/rot1.log 2>&1
+
 ```
 
 ## Setup

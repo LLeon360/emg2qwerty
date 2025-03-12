@@ -12,7 +12,7 @@ defaults:
 
 seed: 1501
 batch_size: 32
-num_workers: 16  # Number of workers for dataloading
+num_workers: 8  # Number of workers for dataloading
 train: True  # Whether to train or only run validation and test
 checkpoint: null  # Optional path to checkpoint file
 
@@ -44,7 +44,7 @@ logger:
   entity: emg2qwerty
   project: encoder_transformer
   name: ${exp_name}
-  save_dir: /home/rathul/emg2qwerty/wandb_logs/ # ${now:%Y-%m-%d}/${now:%H-%M-%S}/wandb
+  save_dir: logs/${now:%Y-%m-%d}/${now:%H-%M-%S}/wandb
 
 dataset:
   root: ${hydra:runtime.cwd}/data

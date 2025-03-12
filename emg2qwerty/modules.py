@@ -8,7 +8,10 @@ from collections.abc import Sequence
 
 import torch
 from torch import nn
+import torch.nn as nn
+import torch.nn.functional as F
 import math
+from typing import Optional, Tuple
 
 class SpectrogramNorm(nn.Module):
     """A `torch.nn.Module` that applies 2D batch normalization over spectrogram
@@ -335,3 +338,153 @@ class TransformerEncoder(nn.Module):
         out = self.transformer_encoder(x) # (T, N, d_model) -> (T, N, d_model)
 
         return out
+
+class RotaryTransformerEncoder(nn.Module):
+    """
+    Transformer Encoder with Rotary Positional Embeddings
+    Input shape: (T, N, num_features) where:
+    - T: sequence length (time steps)
+    - N: batch size
+    - num_features: input feature dimension
+    """
+    
+    def __init__(self, num_features: int, num_layers: int = 6, d_model: int = 512, nhead: int = 8):
+        super().__init__()
+        self.d_model = d_model
+        self.nhead = nhead
+        
+        # Input projection
+        self.fc_in = nn.Linear(num_features, d_model)
+        
+        # Transformer layers
+        self.layers = nn.ModuleList([
+            RotaryTransformerEncoderLayer(d_model, nhead)
+            for _ in range(num_layers)
+        ])
+
+        self._reset_parameters()
+
+    def _reset_parameters(self):
+        for p in self.parameters():
+            if p.dim() > 1:
+                nn.init.xavier_uniform_(p)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Args:
+            x: Tensor of shape (T, N, num_features)
+        Returns:
+            Tensor of shape (T, N, d_model)
+        """
+        # Input projection
+        x = self.fc_in(x)  # (T, N, d_model)
+        
+        # Process through transformer layers
+        for layer in self.layers:
+            x = layer(x)
+            
+        return x
+
+class RotaryTransformerEncoderLayer(nn.Module):
+    def __init__(self, d_model: int, nhead: int, dim_feedforward: int = 2048, dropout: float = 0.1):
+        super().__init__()
+        self.self_attn = RotaryAttention(d_model, nhead, dropout=dropout)
+        self.norm1 = nn.LayerNorm(d_model)
+        self.norm2 = nn.LayerNorm(d_model)
+        self.ffn = FeedForward(d_model, dim_feedforward, dropout)
+        self.dropout = nn.Dropout(dropout)
+
+    def forward(self, src: torch.Tensor) -> torch.Tensor:
+        # Self-attention branch
+        src2 = self.self_attn(self.norm1(src))
+        src = src + self.dropout(src2)
+        
+        # Feedforward branch
+        src2 = self.ffn(self.norm2(src))
+        src = src + self.dropout(src2)
+        return src
+
+class RotaryAttention(nn.Module):
+    def __init__(self, embed_dim: int, num_heads: int, dropout: float = 0.1):
+        super().__init__()
+        self.embed_dim = embed_dim
+        self.num_heads = num_heads
+        self.head_dim = embed_dim // num_heads
+        assert self.head_dim * num_heads == embed_dim, "embed_dim must be divisible by num_heads"
+
+        # Projection layers
+        self.in_proj = nn.Linear(embed_dim, 3 * embed_dim)
+        self.out_proj = nn.Linear(embed_dim, embed_dim)
+        self.dropout = nn.Dropout(dropout)
+
+        # Rotary embedding parameters
+        self.register_buffer(
+            "inv_freq", 
+            1.0 / (10000 ** (torch.arange(0, self.head_dim, 2).float() / self.head_dim))
+        )
+
+    def _compute_rotary_emb(self, x: torch.Tensor, seq_dim: int = 0) -> torch.Tensor:
+        seq_len = x.size(seq_dim)
+        t = torch.arange(seq_len, device=x.device, dtype=self.inv_freq.dtype)
+        freqs = torch.einsum('i,j->ij', t, self.inv_freq)  # shape: (seq_len, head_dim/2)
+        # Duplicate to cover full head_dim
+        return torch.cat([freqs, freqs], dim=-1)  # shape: (seq_len, head_dim)
+
+    def _apply_rotary_emb(self, x: torch.Tensor, freqs: torch.Tensor) -> torch.Tensor:
+        # Reshape freqs for broadcasting: (T, 1, 1, head_dim)
+        cos = freqs.cos().unsqueeze(1).unsqueeze(1)
+        sin = freqs.sin().unsqueeze(1).unsqueeze(1)
+        return (x * cos) + (self._rotate_half(x) * sin)
+
+    @staticmethod
+    def _rotate_half(x: torch.Tensor) -> torch.Tensor:
+        x1, x2 = x.chunk(2, dim=-1)
+        return torch.cat((-x2, x1), dim=-1)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Args:
+            x: Tensor of shape (T, N, E)
+        Returns:
+            Tensor of shape (T, N, E)
+        """
+        T, N, _ = x.shape
+        
+        # Project inputs
+        q, k, v = self.in_proj(x).chunk(3, dim=-1)
+        
+        # Reshape for multi-head attention
+        q = q.view(T, N, self.num_heads, self.head_dim)
+        k = k.view(T, N, self.num_heads, self.head_dim)
+        v = v.view(T, N, self.num_heads, self.head_dim)
+        
+        # Compute and apply rotary embeddings (using sequence length dimension)
+        freqs = self._compute_rotary_emb(q)
+        q = self._apply_rotary_emb(q, freqs)
+        k = self._apply_rotary_emb(k, freqs)
+        
+        # Attention computation
+        q = q.permute(1, 2, 0, 3)  # (N, H, T, D)
+        k = k.permute(1, 2, 3, 0)  # (N, H, D, T)
+        v = v.permute(1, 2, 0, 3)  # (N, H, T, D)
+        
+        # Scaled dot-product attention
+        attn_weights = torch.matmul(q, k) / math.sqrt(self.head_dim)
+        attn_weights = F.softmax(attn_weights, dim=-1)
+        attn_weights = self.dropout(attn_weights)
+        
+        # Apply attention to values
+        output = torch.matmul(attn_weights, v)
+        output = output.permute(2, 0, 1, 3).reshape(T, N, self.embed_dim)
+        return self.out_proj(output)
+
+class FeedForward(nn.Module):
+    def __init__(self, d_model: int, dim_feedforward: int, dropout: float):
+        super().__init__()
+        self.linear1 = nn.Linear(d_model, dim_feedforward)
+        self.linear2 = nn.Linear(dim_feedforward, d_model)
+        self.dropout = nn.Dropout(dropout)
+        self.activation = F.relu
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.linear2(self.dropout(self.activation(self.linear1(x))))
