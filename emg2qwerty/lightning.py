@@ -94,6 +94,7 @@ class WindowedEMGDataModule(pl.LightningDataModule):
                     # Feed the entire session at once without windowing/padding
                     # at test time for more realism
                     window_length=None,
+                    # window_length=self.window_length,
                     padding=(0, 0),
                     jitter=False,
                 )
@@ -376,19 +377,19 @@ class TransformerEncoderCTCModule(pl.LightningModule):
             target = LabelData.from_labels(targets[: target_lengths[i], i])
             metrics.update(prediction=predictions[i], target=target)
 
-            pred = predictions[i]
-            print(f"Prediction: {pred} vs Target: {target}")
-            print(f"Prediction length: {len(pred)}")
+            # pred = predictions[i]
+            # print(f"Prediction: {pred} vs Target: {target}")
+            # print(f"Prediction length: {len(pred)}")
 
         self.log(f"{phase}/loss", loss, batch_size=N, sync_dist=True)
 
-        # Debug prints
-        print(f"Phase: {phase}")
-        print(f"Input shape: {inputs.shape}, Emissions shape: {emissions.shape}")
-        print(f"T_diff: {T_diff}")
-        print(f"Input lengths: {input_lengths}")
-        print(f"Emission lengths: {emission_lengths}")
-        print(f"Target lengths: {target_lengths}")
+        # # Debug prints
+        # print(f"Phase: {phase}")
+        # print(f"Input shape: {inputs.shape}, Emissions shape: {emissions.shape}")
+        # print(f"T_diff: {T_diff}")
+        # print(f"Input lengths: {input_lengths}")
+        # print(f"Emission lengths: {emission_lengths}")
+        # print(f"Target lengths: {target_lengths}")
 
         return loss
 
@@ -530,13 +531,13 @@ class RotaryTransformerEncoderCTCModule(pl.LightningModule):
 
         self.log(f"{phase}/loss", loss, batch_size=N, sync_dist=True)
 
-        # Debug prints
-        print(f"Phase: {phase}")
-        print(f"Input shape: {inputs.shape}, Emissions shape: {emissions.shape}")
-        print(f"T_diff: {T_diff}")
-        print(f"Input lengths: {input_lengths}")
-        print(f"Emission lengths: {emission_lengths}")
-        print(f"Target lengths: {target_lengths}")
+        # # Debug prints
+        # print(f"Phase: {phase}")
+        # print(f"Input shape: {inputs.shape}, Emissions shape: {emissions.shape}")
+        # print(f"T_diff: {T_diff}")
+        # print(f"Input lengths: {input_lengths}")
+        # print(f"Emission lengths: {emission_lengths}")
+        # print(f"Target lengths: {target_lengths}")
 
         return loss
 

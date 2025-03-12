@@ -1,11 +1,11 @@
 #!/bin/bash
 
-DEVICES=0,1
-NUM_DEVICES=2
-USER="leonliu360-ucla-org"
-MODEL="transformer_encoder_ctc_small"
-EXP_NAME="distributed_training"
-CHECKPOINT=""
+DEVICES=0
+NUM_DEVICES=1
+USER="single_user"
+MODEL="roformer_encoder_ctc_small.yaml"
+EXP_NAME="roformer_small_test"
+CHECKPOINT="'/home/bytemarish/ECEC147/emg2qwerty/logs/2025-03-11/17-54-34/checkpoints/epoch=726-step=87240.ckpt'"
 LOG_DIR="logs"
 
 mkdir -p ${LOG_DIR}
@@ -39,10 +39,12 @@ CMD="python -m emg2qwerty.train \
     trainer.devices=${NUM_DEVICES} \
     model=\"${MODEL}\" \
     train=False \
-    checkpoint=\"${CHECKPOINT}\""
+    checkpoint=\"${CHECKPOINT}\" \
+    +exp_name=\"${EXP_NAME}\""
 
 # Run the evaluation command and log output
 echo "Running evaluation with checkpoint: ${CHECKPOINT}"
+echo "Command: ${CMD}"
 EVAL_LOG_FILE="${LOG_DIR}/${EXP_NAME}_eval_$(date +%Y%m%d_%H%M%S).log"
 eval "CUDA_VISIBLE_DEVICES=${DEVICES} ${CMD} 2>&1 | tee ${EVAL_LOG_FILE}"
 
