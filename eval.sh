@@ -4,9 +4,11 @@ DEVICES=0
 NUM_DEVICES=1
 USER="single_user"
 MODEL="roformer_encoder_ctc_small.yaml"
-EXP_NAME="roformer_small_test"
-CHECKPOINT="'/home/bytemarish/ECEC147/emg2qwerty/logs/2025-03-11/17-54-34/checkpoints/epoch=726-step=87240.ckpt'"
+EXP_NAME="roformer_encoder_ctc_small_test"
+CHECKPOINT="'/home/bytemarish/ECEC147/emg2qwerty/logs/2025-03-12/18-07-29/checkpoints/epoch=874-step=52500.ckpt'"
 LOG_DIR="logs"
+
+WINDOW_LENGTH=8000 # 8000 is 4 sec windows for 2kHz EMG
 
 mkdir -p ${LOG_DIR}
 
@@ -40,7 +42,8 @@ CMD="python -m emg2qwerty.train \
     model=\"${MODEL}\" \
     train=False \
     checkpoint=\"${CHECKPOINT}\" \
-    +exp_name=\"${EXP_NAME}\""
+    +exp_name=\"${EXP_NAME}\" \
+    datamodule.window_length=8000"
 
 # Run the evaluation command and log output
 echo "Running evaluation with checkpoint: ${CHECKPOINT}"

@@ -1,6 +1,6 @@
 #!/bin/bash
 
-DEVICES=1
+DEVICES=2
 NUM_DEVICES=1
 NUM_NODES=1
 USER="single_user"
@@ -10,7 +10,7 @@ NUM_WORKERS=8
 CLUSTER="local"
 LOG_DIR="logs"
 SEED=0
-LEARNING_RATE=5e-4
+LEARNING_RATE=1e-4
 MAX_EPOCHS=1000
 LOG_EVERY_N_STEPS=50
 
@@ -22,10 +22,10 @@ D_MODEL=384
 NHEAD=6
 
 # session splitting parameters
-WINDOW_LENGTH=16000  # 8000 is 4 sec windows for 2kHz EMG
+WINDOW_LENGTH=16000  # 4 sec windows for 2kHz EMG
 
 # Build experiment name with module parameters
-EXP_NAME="${MODEL}_BS${BATCH_SIZE}_LR${LEARNING_RATE}_SEED${SEED}_${MLP_FEATURES_EXP_NAME}MLPFeatures_${D_MODEL}DModel_${NUM_LAYERS}Layers_${NHEAD}Heads"
+EXP_NAME="${MODEL}_BS${BATCH_SIZE}_LR${LEARNING_RATE}_SEED${SEED}_${MLP_FEATURES_EXP_NAME}MLPFeatures_${D_MODEL}DModel_${NUM_LAYERS}Layers_${NHEAD}Heads_${WINDOW_LENGTH}WindowLen"
 # EXP_NAME="rot_encoder_small"  # Uncomment to use a simple name instead
 
 mkdir -p ${LOG_DIR}

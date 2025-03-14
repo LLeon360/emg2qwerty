@@ -93,8 +93,8 @@ class WindowedEMGDataModule(pl.LightningDataModule):
                     transform=self.test_transform,
                     # Feed the entire session at once without windowing/padding
                     # at test time for more realism
-                    window_length=None,
-                    # window_length=self.window_length,
+                    # window_length=None,
+                    window_length=self.window_length,
                     padding=(0, 0),
                     jitter=False,
                 )
