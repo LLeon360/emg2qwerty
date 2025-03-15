@@ -1,6 +1,6 @@
 #!/bin/bash
 
-DEVICES=1
+DEVICES=0
 NUM_DEVICES=1
 NUM_NODES=1
 USER="single_user"
@@ -11,7 +11,7 @@ CLUSTER="local"
 LOG_DIR="logs"
 SEED=0
 LEARNING_RATE=5e-4
-MAX_EPOCHS=1000
+MAX_EPOCHS=500
 LOG_EVERY_N_STEPS=50
 
 # Model configuration parameters
@@ -22,10 +22,13 @@ D_MODEL=384
 NHEAD=6
 
 # session splitting parameters
-WINDOW_LENGTH=16000  # 8000 is 4 sec windows for 2kHz EMG
+WINDOW_LENGTH=8000 # 8000 is 4 sec windows for 2kHz EMG
+
+# hop length
+HOP_LENGTH=80 # 2kHz / 80 = 25Hz
 
 # Build experiment name with module parameters
-EXP_NAME="${MODEL}_BS${BATCH_SIZE}_LR${LEARNING_RATE}_SEED${SEED}_${MLP_FEATURES_EXP_NAME}MLPFeatures_${D_MODEL}DModel_${NUM_LAYERS}Layers_${NHEAD}Heads"
+EXP_NAME="${MODEL}_BS${BATCH_SIZE}_LR${LEARNING_RATE}_SEED${SEED}_${MLP_FEATURES_EXP_NAME}MLPFeatures_${D_MODEL}DModel_${NUM_LAYERS}Layers_${NHEAD}Heads_${HOP_LENGTH}HopLength"
 # EXP_NAME="rot_encoder_small"  # Uncomment to use a simple name instead
 
 mkdir -p ${LOG_DIR}
@@ -49,7 +52,8 @@ CMD="python -m emg2qwerty.train \
   module.num_layers=${NUM_LAYERS} \
   module.d_model=${D_MODEL} \
   module.nhead=${NHEAD} \
-  datamodule.window_length=${WINDOW_LENGTH}"
+  datamodule.window_length=${WINDOW_LENGTH} \
+  logspec.hop_length=${HOP_LENGTH} "
 
 echo "${CMD}"
 LOG_FILE="${LOG_DIR}/${EXP_NAME}_$(date +%Y%m%d_%H%M%S).log"

@@ -46,6 +46,8 @@ CUDA_VISIBLE_DEVICES=0 python -m emg2qwerty.train user="single_user" trainer.acc
 
 ```
 
+We also provide shell scripts for some of our experimental configurations, note that if you intend on using `eval.sh` to evaluate models trained with different data preprocessing (window size / hop length), you should modify `eval.sh` to load the eval datasets with the corresponding data preprocessing configured as well. 
+
 ## Setup
 
 ```shell

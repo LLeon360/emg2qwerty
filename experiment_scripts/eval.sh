@@ -8,6 +8,8 @@ EXP_NAME="eval15"
 CHECKPOINT="logs/checkpoints/last-v15.ckpt"
 LOG_DIR="logs"
 
+WINDOW_LENGTH=8000 # 8000 is 4 sec windows for 2kHz EMG
+
 mkdir -p ${LOG_DIR}
 
 if [ -z "${CHECKPOINT}" ]; then
@@ -46,11 +48,13 @@ CMD="python -m emg2qwerty.train \
     +model.residual_rnn.use_cudnn=False \
     model=${MODEL} \
     train=False \
-    checkpoint='\"${CHECKPOINT}\"'"
+    checkpoint=\"${CHECKPOINT}\" \
+    +exp_name=\"${EXP_NAME}\" \
+    datamodule.window_length=8000"
 
 # Run the evaluation command and log output
 echo "Running evaluation with checkpoint: ${CHECKPOINT}"
-echo "${CMD}"
+echo "Command: ${CMD}"
 EVAL_LOG_FILE="${LOG_DIR}/${EXP_NAME}_eval_$(date +%Y%m%d_%H%M%S).log"
 eval "PYTORCH_CUDNN_ENABLED=0 CUDA_VISIBLE_DEVICES=${DEVICES} ${CMD} 2>&1 | tee ${EVAL_LOG_FILE}"
 
