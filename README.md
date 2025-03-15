@@ -1,4 +1,12 @@
 # C147/247 Final Project
+
+Rathul Anand
+
+Leon Liu 
+
+## Abstract
+This project investigates the effectiveness of various sequence processing architectures, specifically Recurrent Neural Networks (RNNs), Gated Recurrent Units (GRUs), Long Short-Term Memory networks (LSTMs), and Transformers, in decoding surface electromyography (sEMG) signals into corresponding key press sequences. These signals are collected from wearable wrist sensors during touch typing on a QWERTY keyboard. By leveraging the emg2qwerty dataset, we aim to determine which sequence processing architecture offers superior performance in decoding sEMG signals for accurate text input recognition when trained on a single user's data from random initialization. Our findings show that transformer and recurrent architectures with more flexible receptive fields significantly outperform the baseline Time-Depth Separable ConvNet trained, addressing the hypothesis that fixed receptive fields are necessary for this task. Additionally, we demonstrate that log spectrograms can be down-sampled more aggressively (up to 50Hz from the baseline 125Hz) without significant performance degradation, which helps offset the computational costs associated with these more powerful sequence processing architectures and offers efficiency improvements upon the previous baseline. We additionally explore the impacts of training sequence length on generalization, revealing limitations on generalization of transformer models to longer sequences for limited computational training and single user data.
+
 ### Winter 2025 - _Professor Jonathan Kao_
 
 This course project is built upon the emg2qwerty work from Meta. The first section of this README provides some guidance for working with the repo and contains a running list of FAQs. **Note that the rest of the README is from the original repo and we encourage you to take a look at their work.**
