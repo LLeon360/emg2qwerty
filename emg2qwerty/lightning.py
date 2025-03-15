@@ -27,6 +27,8 @@ from emg2qwerty.modules import (
     TDSConvEncoder,
     TransformerEncoder,
     RotaryTransformerEncoder,
+    CausalTransformerEncoder,
+    ConvSubsample
 )
 from emg2qwerty.transforms import Transform
 
@@ -569,7 +571,168 @@ class RotaryTransformerEncoderCTCModule(pl.LightningModule):
             optimizer_config=self.hparams.optimizer,
             lr_scheduler_config=self.hparams.lr_scheduler,
         )
-        
+
+
+class TransformerEncoderCTCModule2(pl.LightningModule):
+    """
+    Transformer CTC module supporting conv frontend, pos embedding options, causal transformer
+    """
+    NUM_BANDS: ClassVar[int] = 2
+    ELECTRODE_CHANNELS: ClassVar[int] = 16
+
+    def __init__(
+        self,
+        in_features: int,
+        mlp_features: Sequence[int],
+        num_layers: int,
+        d_model: int,
+        nhead: int,
+        dropout: float,
+        causal: bool,
+        norm_first: bool,
+        pos_embed: str,         # "sinusoidal", "learnable", "rotary"
+        use_subsampling: bool,     # whether to enable conv subsampling
+        conv_out_channels: int,   # if subsampling, number of out channels
+        optimizer: DictConfig,
+        lr_scheduler: DictConfig,
+        decoder: DictConfig,
+    ):
+        super().__init__()
+        self.save_hyperparameters()
+
+        # Compute feature dimension after MLP (per hand) and concatenation.
+        num_features = self.NUM_BANDS * mlp_features[-1]
+
+        # 1) Spectrogram normalization
+        self.spectro_norm = SpectrogramNorm(channels=self.NUM_BANDS * self.ELECTRODE_CHANNELS)
+        # 2) Rotation Invariant MLP
+        self.mlp = MultiBandRotationInvariantMLP(
+            in_features=in_features,
+            mlp_features=mlp_features,
+            num_bands=self.NUM_BANDS,
+        )
+        # 3) Flatten to (T, N, num_features)
+        self.flatten = nn.Flatten(start_dim=2)
+        # 4) Optional Convolutional Subsampling
+        self.conv_subsample_enabled = use_subsampling
+        if self.conv_subsample_enabled:
+            self.conv_subsample = ConvSubsample(in_channels=1, out_channels=conv_out_channels)
+            # We assume that after subsampling feature dim is conv_out_channels*F_sub
+            self.fc_in = nn.Linear(conv_out_channels, d_model)
+        else:
+            self.fc_in = nn.Linear(num_features, d_model)
+
+        # 5) Transformer encder
+        self.transformer_encoder = CausalTransformerEncoder(
+            num_features = d_model,  # after fc_in projection, features are d_model-dim
+            num_layers = num_layers,
+            d_model = d_model,
+            nhead = nhead,
+            dropout = dropout,
+            causal = causal,
+            norm_first = norm_first,
+            pos_embed = pos_embed
+        )
+        # 6) Output projection
+        self.fc_out = nn.Linear(d_model, charset().num_classes)
+        self.log_softmax = nn.LogSoftmax(dim=-1)
+
+        self.ctc_loss = nn.CTCLoss(blank=charset().null_class)
+        self.decoder = instantiate(decoder)
+        metrics = MetricCollection([CharacterErrorRates()])
+        self.metrics = nn.ModuleDict({
+            f"{phase}_metrics": metrics.clone(prefix=f"{phase}/")
+            for phase in ["train", "val", "test"]
+        })
+
+        self.optimizer_config = optimizer
+        self.lr_scheduler_config = lr_scheduler
+
+    def forward(self, inputs: torch.Tensor) -> torch.Tensor:
+        # inputs (T, N, bands=2, 16, freq)
+        x = self.spectro_norm(inputs)
+        x = self.mlp(x)
+        x = self.flatten(x)  # (T, N, num_features)
+        if self.conv_subsample_enabled:
+            x = self.conv_subsample(x)  # (T_sub, N, conv_out_channels * F_sub) – simplified
+            # assume the conv_subsample output channel dimension equals conv_out_channels
+            x = self.fc_in(x)  # project to d_model
+        else:
+            x = self.fc_in(x)  # project from num_features to d_model
+
+        # Pass through the improved transformer encoder
+        x = self.transformer_encoder(x)  # (T_out, N, d_model)
+        x = self.fc_out(x)
+        x = self.log_softmax(x)
+        return x
+
+    def _step(self, phase: str, batch: dict[str, torch.Tensor]) -> torch.Tensor:
+        inputs = batch["inputs"]       # (T, N, bands=2, 16, freq)
+        targets = batch["targets"]
+        input_lengths = batch["input_lengths"]
+        target_lengths = batch["target_lengths"]
+        N = len(input_lengths)
+
+        emissions = self.forward(inputs)  # (T_out, N, num_classes)
+
+        # Adjust emission lengths – TODO if subsampling was used do i have to adjust input_lengths appropriately
+        T_diff = inputs.shape[0] - emissions.shape[0]
+        emission_lengths = input_lengths - T_diff
+
+        loss = self.ctc_loss(
+            log_probs=emissions,
+            targets=targets.transpose(0, 1),
+            input_lengths=emission_lengths,
+            target_lengths=target_lengths,
+        )
+
+        predictions = self.decoder.decode_batch(
+            emissions=emissions.detach().cpu().numpy(),
+            emission_lengths=emission_lengths.detach().cpu().numpy(),
+        )
+
+        metrics = self.metrics[f"{phase}_metrics"]
+        targets_np = targets.detach().cpu().numpy()
+        target_lengths_np = target_lengths.detach().cpu().numpy()
+        for i in range(N):
+            target = LabelData.from_labels(targets_np[: target_lengths_np[i], i])
+            metrics.update(prediction=predictions[i], target=target)
+
+        self.log(f"{phase}/loss", loss, batch_size=N, sync_dist=True)
+        return loss
+
+    def training_step(self, batch, batch_idx):
+        return self._step("train", batch)
+
+    def validation_step(self, batch, batch_idx):
+        return self._step("val", batch)
+
+    def test_step(self, batch, batch_idx):
+        return self._step("test", batch)
+
+    def on_train_epoch_end(self):
+        m = self.metrics["train_metrics"]
+        self.log_dict(m.compute(), sync_dist=True)
+        m.reset()
+
+    def on_validation_epoch_end(self):
+        m = self.metrics["val_metrics"]
+        self.log_dict(m.compute(), sync_dist=True)
+        m.reset()
+
+    def on_test_epoch_end(self):
+        m = self.metrics["test_metrics"]
+        self.log_dict(m.compute(), sync_dist=True)
+        m.reset()
+
+    def configure_optimizers(self) -> dict[str, Any]:
+        return utils.instantiate_optimizer_and_scheduler(
+            self.parameters(),
+            optimizer_config=self.optimizer_config,
+            lr_scheduler_config=self.lr_scheduler_config,
+        )
+
+
 class RNNCTCModule(pl.LightningModule):
     NUM_BANDS: ClassVar[int] = 2
     ELECTRODE_CHANNELS: ClassVar[int] = 16
@@ -751,10 +914,10 @@ class ResidualRNN(nn.Module):
         # x: (T, N, input_size)
         for i, layer in enumerate(self.layers):
             residual = x
-            x, _ = layer(x)
+            x, _ = layer(x.contiguous())
             x = self.dropout(x)
-            if i > 0:
-                x == residual
+            # if i > 0:
+            #     x += residual
         return x
 
 class ResidualRNNCTCModule(pl.LightningModule):

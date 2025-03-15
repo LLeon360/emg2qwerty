@@ -44,14 +44,14 @@ logger:
   entity: emg2qwerty
   project: encoder_transformer
   name: ${exp_name}
-  save_dir: logs/${now:%Y-%m-%d}/${now:%H-%M-%S}/wandb
+  save_dir: logs/ # ${now:%Y-%m-%d}/${now:%H-%M-%S}/wandb
 
 dataset:
   root: ${hydra:runtime.cwd}/data
 
 hydra:
   run:
-    dir: logs/${now:%Y-%m-%d}/${now:%H-%M-%S}
+    dir: logs/ # ${now:%Y-%m-%d}/${now:%H-%M-%S}
   sweep:
     dir: ${hydra.run.dir}
     subdir: job${hydra.job.num}_${hydra.job.override_dirname}

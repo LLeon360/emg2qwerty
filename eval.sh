@@ -1,11 +1,11 @@
 #!/bin/bash
 
-DEVICES=0,1
-NUM_DEVICES=2
-USER="leonliu360-ucla-org"
-MODEL="transformer_encoder_ctc_small"
-EXP_NAME="distributed_training"
-CHECKPOINT=""
+DEVICES=0
+NUM_DEVICES=1
+USER="single_user"
+MODEL="residual_rnn_ctc"
+EXP_NAME="eval15"
+CHECKPOINT="logs/checkpoints/last-v15.ckpt"
 LOG_DIR="logs"
 
 mkdir -p ${LOG_DIR}
@@ -33,17 +33,25 @@ if [ -z "${CHECKPOINT}" ]; then
   fi
 fi
 
+if [ -z "${CHECKPOINT}" ]; then
+    echo "Error: CHECKPOINT variable is empty."
+    exit 1
+fi
+
 CMD="python -m emg2qwerty.train \
-    user=\"${USER}\" \
+    user=${USER} \
     trainer.accelerator=gpu \
     trainer.devices=${NUM_DEVICES} \
-    model=\"${MODEL}\" \
+    +exp_name=\"${EXP_NAME}\" \
+    +model.residual_rnn.use_cudnn=False \
+    model=${MODEL} \
     train=False \
-    checkpoint=\"${CHECKPOINT}\""
+    checkpoint='\"${CHECKPOINT}\"'"
 
 # Run the evaluation command and log output
 echo "Running evaluation with checkpoint: ${CHECKPOINT}"
+echo "${CMD}"
 EVAL_LOG_FILE="${LOG_DIR}/${EXP_NAME}_eval_$(date +%Y%m%d_%H%M%S).log"
-eval "CUDA_VISIBLE_DEVICES=${DEVICES} ${CMD} 2>&1 | tee ${EVAL_LOG_FILE}"
+eval "PYTORCH_CUDNN_ENABLED=0 CUDA_VISIBLE_DEVICES=${DEVICES} ${CMD} 2>&1 | tee ${EVAL_LOG_FILE}"
 
 echo "Evaluation complete. Log saved to ${EVAL_LOG_FILE}"

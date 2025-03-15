@@ -488,3 +488,105 @@ class FeedForward(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.linear2(self.dropout(self.activation(self.linear1(x))))
+
+class ConvSubsample(nn.Module):
+    """
+    2-layer convolutional subsampling in (time, freq) dimension
+    Input shape after flatten prolly (T, N, features), but we can reshape it to (N, 1, T, features') for 2D conv
+    
+    Does not use TDS convolutions, just standard conv layers
+    """
+
+    def __init__(self, in_channels: int = 1, out_channels: int = 64, stride_time: int = 2, stride_feat: int = 1):
+        super().__init__()
+        self.conv1 = nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=(stride_time, stride_feat), padding=(1,1))
+        self.relu1 = nn.ReLU()
+        self.conv2 = nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=(stride_time, stride_feat), padding=(1,1))
+        self.relu2 = nn.ReLU()
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        # x: (T, N, features)
+        T, N, F = x.shape
+        x = x.permute(1, 0, 2)   # (N, T, F)
+        x = x.unsqueeze(1)       # (N, 1, T, F)
+        x = self.conv1(x)
+        x = self.relu1(x)
+        x = self.conv2(x)
+        x = self.relu2(x)
+        # x: (N, out_channels, T_sub, F_sub)
+        N2, C2, T2, F2 = x.shape
+        x = x.permute(2, 0, 1, 3)  # (T2, N, C2, F2)
+        x = x.reshape(T2, N, C2 * F2)  # (T2, N, C2*F2)
+        return x
+
+class CausalTransformerEncoder(nn.Module):
+    """
+    Transformer encoder that supports causal mask, pre layer norm, and sinusoidal vs learnable vs rotary embeddings
+    """
+    def __init__(
+        self,
+        num_features: int,
+        num_layers: int = 6,
+        d_model: int = 512,
+        nhead: int = 8,
+        dropout: float = 0.1,
+        causal: bool = False,
+        norm_first: bool = False,
+        pos_embed: str = "learnable"  # "sinusoidal", "learnable", "rotary"
+    ):
+        super().__init__()
+        self.d_model = d_model
+        self.causal = causal
+        self.pos_embed = pos_embed.lower()
+
+        if self.pos_embed == "rotary":
+            self.encoder = RotaryTransformerEncoder(num_features, num_layers, d_model, nhead)
+        else:
+            self.fc_in = nn.Linear(num_features, d_model)
+            encoder_layer = nn.TransformerEncoderLayer(
+                d_model=d_model,
+                nhead=nhead,
+                dropout=dropout,
+                norm_first=norm_first,
+                batch_first=False
+            )
+            self.encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
+            # Set up positional embeddings
+            self.max_len = 10000
+            if self.pos_embed == "learnable":
+                self.pos_embedding = nn.Parameter(torch.randn(self.max_len, d_model))
+            elif self.pos_embed == "sinusoidal":
+                self.pos_embedding = self._sinusoidal_positional_encoding(d_model, self.max_len)
+            else:
+                raise ValueError("Invalid pos_embed type. Choose from 'sinusoidal', 'learnable', or 'rotary'.")
+
+    def _sinusoidal_positional_encoding(self, d_model: int, length: int) -> torch.Tensor:
+        if d_model % 2 != 0:
+            raise ValueError("d_model must be even for sinusoidal positional encoding.")
+        pe = torch.zeros(length, d_model)
+        position = torch.arange(0, length).unsqueeze(1)
+        div_term = torch.exp(torch.arange(0, d_model, 2).float() * -(math.log(10000.0) / d_model))
+        pe[:, 0::2] = torch.sin(position.float() * div_term)
+        pe[:, 1::2] = torch.cos(position.float() * div_term)
+        return pe
+
+    def _generate_causal_mask(self, T: int, device: torch.device) -> torch.Tensor:
+        mask = torch.triu(torch.full((T, T), float('-inf'), device=device), diagonal=1)
+        return mask
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        # x: (T, N, num_features)
+        T, N, _ = x.shape
+        if self.pos_embed == "rotary":
+            # RotaryTransformerEncoder already does its own input projection and processing
+            return self.encoder(x)
+        else:
+            x = self.fc_in(x)  # (T, N, d_model)
+            
+            # Add positional embedding
+            pe = self.pos_embedding[:T, :].to(x.device)  # (T, d_model)
+            x = x + pe.unsqueeze(1)
+            
+            # Apply causal mask if needed
+            mask = self._generate_causal_mask(T, x.device) if self.causal else None
+            return self.encoder(x, mask=mask)

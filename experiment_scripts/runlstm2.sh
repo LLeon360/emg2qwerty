@@ -1,31 +1,32 @@
 #!/bin/bash
 
-# Basic training configuration
 DEVICES=0
 NUM_DEVICES=1
 NUM_NODES=1
 USER="single_user"
-MODEL="rnn_ctc"
+MODEL="residual_lstm_ctc"
 BATCH_SIZE=64
 CLUSTER="local"
 LOG_DIR="logs"
 SEED=0
 LEARNING_RATE=4e-4
-MAX_EPOCHS=1000
+WEIGHT_DECAY=2e-4
+MAX_EPOCHS=500
 LOG_EVERY_N_STEPS=50
 GRAD_ACCUM=1
-# NOTE: gradient accumulation is defined manually in residual_rnn_ctc.yaml and rnn_ctc.yaml
 
-# Current active configuration parameters
-MLP_FEATURES="[384]"  
-MLP_FEAUTRES_EXP_NAME="384"
+# Current active configuration parameters, med RNN
+# Using med RNN as it had 8 train CER, but overfit quite a bit
+# TODO: try data aug to prevent overfitting
+MLP_FEATURES="[512]"  
+MLP_FEAUTRES_EXP_NAME="512"
 HIDDEN_SIZE=256
-NUM_LAYERS=2
-DROPOUT=0.2
+NUM_LAYERS=4
+DROPOUT=0.4   # higher dropout
 RNN_TYPE="GRU"
 
 # Build experiment name with module parameters
-EXP_NAME="${MODEL}_BS${BATCH_SIZE}x${GRAD_ACCUM}_LR${LEARNING_RATE}_SEED${SEED}_EPOCHS${MAX_EPOCHS}_${MLP_FEAUTRES_EXP_NAME}MLPFeatures_${HIDDEN_SIZE}HiddenSize_${NUM_LAYERS}Layers_${DROPOUT}Dropout_${RNN_TYPE}"
+EXP_NAME="${MODEL}_BS${BATCH_SIZE}x${GRAD_ACCUM}_WD${WEIGHT_DECAY}_LR${LEARNING_RATE}_SEED${SEED}_EPOCHS${MAX_EPOCHS}_${MLP_FEAUTRES_EXP_NAME}MLPFeatures_${HIDDEN_SIZE}HiddenSize_${NUM_LAYERS}Layers_${DROPOUT}Dropout_${RNN_TYPE}"
 # EXP_NAME="RNN_CTC_INVESTIGATE"
 
 mkdir -p ${LOG_DIR}
@@ -42,6 +43,7 @@ CMD="python -m emg2qwerty.train \
   seed=${SEED} \
   cluster=${CLUSTER} \
   optimizer.lr=${LEARNING_RATE} \
+  optimizer.weight_decay=${WEIGHT_DECAY} \
   trainer.max_epochs=${MAX_EPOCHS} \
   +trainer.log_every_n_steps=${LOG_EVERY_N_STEPS} \
   module.mlp_features='${MLP_FEATURES}' \
@@ -53,6 +55,3 @@ CMD="python -m emg2qwerty.train \
 echo "${CMD}"
 LOG_FILE="${LOG_DIR}/${EXP_NAME}_$(date +%Y%m%d_%H%M%S).log"
 eval "CUDA_VISIBLE_DEVICES=${DEVICES} ${CMD} 2>&1 | tee ${LOG_FILE}"
-
-echo "Training complete. Log saved to ${LOG_FILE}"
-echo "To evaluate the trained model, run: ./eval.sh --exp-name ${EXP_NAME}"
